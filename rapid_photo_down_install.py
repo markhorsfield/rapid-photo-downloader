@@ -1208,7 +1208,7 @@ def parser_options(formatter_class=argparse.HelpFormatter) -> argparse.ArgumentP
         help=_(
             "Install in current Python virzuall environment."
             "If system libraries should be used, then the vritual environment"
-            "must be created with the --system-site-packages  option,"
+            "must be created with the --system-site-packages option,"
             "otherwise the --user-only option should be added to insall"
             "all libraries in the virtual environment via pip."
         )
@@ -1750,7 +1750,7 @@ def main():
         print ("Use local user for pip")
 
     if args.uninstall_with_deps:
-        if len(sys.argv) > 2: #len(sys.argv) > 2:
+        if len(sys.argv) > 2:
             sys.stderr.write(
                 _("Do not include any other command line arguments when specifying") +
                 " --uninstall-with-pip-dependencies\n"
@@ -1777,9 +1777,7 @@ def main():
         clean_locale_tmpdir()
         sys.exit(0)
 
-
     if custom_python():
-        print('Found custom python')
         excecutable = valid_system_python()
         if excecutable is None:
             sys.stderr.write(
@@ -1798,7 +1796,7 @@ def main():
 
     local_folder_permissions(interactive=args.interactive)
 
-    # If "user-only" ooption is set, then force distro as "unknown".
+    # If "user-only" option is set, then force distro as "unknown".
     if args.user_only:
         distro = Distro.unknown
     else:
@@ -1809,7 +1807,7 @@ def main():
     else:
         distro_version = unknown_version
 
-    # Add vext
+    # Vext is required for virtual environments without system-site-packages option
     global require_vext
     require_vext = args.virtual_env and args.user_only
 
