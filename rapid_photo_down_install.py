@@ -504,7 +504,7 @@ def pip_package(package: str, local_pip: bool) -> str:
 
 
 def get_yes_no(response: str) -> bool:
-    """
+    """version
     :param response: the user's response
     :return: True if user response is yes or empty, else False
     """
@@ -599,8 +599,6 @@ def restart_script(restart_with=None) -> None:
      path
     """
 
-    print('restarting...',restart_with)
-
     sys.stdout.flush()
     sys.stderr.flush()
     # restart the script
@@ -611,6 +609,9 @@ def restart_script(restart_with=None) -> None:
         executable = sys.executable
     else:
         executable = restart_with
+
+    print('Restarting script using',executable)
+
     os.execl(executable, executable, *args)
 
 
@@ -880,23 +881,16 @@ def check_packages_on_other_systems() -> None:
             import_msgs.append('python3 variant of PyQt5')
 
     try:
-        print('import GI test')
         import gi
         have_gi = True
     except ImportError:
-        print('import GI error')
-        # Need to add special packages for Gobject-introspection in virtual environment
-        if add_vext:
-            # Maybe add test if vext.gi is already insalled ?
-            #
-            # install vext and vext.gi in Python virtual environment & restart
+        if require_vext and python_package_version('vext.gi') == '':
+            # Need to install vext.gi in Python virtual environment & restart
             print('Installing required vext.gi with pip into virtual environment.')
             print('Note that wheel errors can be ignored for vext installation.')
             command_line = 'pip install vext.gi'
             print(command_line)
             run_cmd(command_line, restart=True, interactive=False)
-            print('Done...!')
-            have_gi = False # can be removed since script is re-started from here (?)
         else:
             import_msgs.append('python3 variant of gobject introspection')
             have_gi = False
@@ -1816,8 +1810,8 @@ def main():
         distro_version = unknown_version
 
     # Add vext
-    global add_vext
-    add_vext = args.virtual_env and args.user_only
+    global require_vext
+    require_vext = args.virtual_env and args.user_only
 
     if distro == Distro.debian:
         if distro_version == unknown_version:
