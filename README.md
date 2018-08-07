@@ -29,3 +29,12 @@ Install Rapid Photo downloader
 ```
 python rapid_photo_down_install.py --virtual-env --user-only
 ```
+#### Run Rapid Photo downloader
+`/path/to/virtual/environment/bin/rapid-photo-downloader`
+
+### Uninstall
+The script doesn't support uninstall options for virtual environment, but this should not be an issue.
+Since it was installed in a venv, the easy way to uninstall it is to just delete the venv folder.
+```
+rm -r /path/to/virtual/environment
+```
