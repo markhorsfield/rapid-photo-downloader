@@ -60,8 +60,7 @@ from base64 import b85decode
 from gettext import gettext as _
 import gettext
 
-
-__version__ = '0.2.0'
+__version__ = '0.2.0' # modified for venv test
 __title__ = _('Rapid Photo Downloader installer')
 __description__ = _("Download and install latest version of Rapid Photo Downloader.")
 
@@ -87,6 +86,14 @@ try:
 except ImportError:
     have_dnf = False
 
+# Check if wheel is available
+# Need to be done before importing pip !
+try:
+    import wheel
+    need_wheel = False
+except:
+    need_wheel = True
+
 try:
     import pip
     have_pip = True
@@ -106,6 +113,9 @@ os_release = '/etc/os-release'
 
 unknown_version = LooseVersion('0.0')
 
+# global variable for pip usewr option
+#pip_user = " --user"
+pip_user = "undefined"
 
 class bcolors:
     HEADER = '\033[95m'
@@ -271,6 +281,9 @@ def pip_packages_required():
     except ImportError:
         packages.append(pip_package('setuptools', local_pip))
 
+    if need_wheel:
+        packages.append(pip_package('wheel', local_pip))
+
     try:
         import wheel
     except:
@@ -287,7 +300,7 @@ def extract_mo_files():
 
     :return: the temp dir if successful, else return None
     """
-    
+
     tmp_dir = None
     mo_files_zip = 'mo_files.zip'
 
@@ -408,9 +421,16 @@ def custom_python() -> bool:
     return not sys.executable.startswith('/usr/bin/python')
 
 
+def is_venv():
+    """
+    :return: True if the python running in venv or virtualenv
+    """
+    return (hasattr(sys, 'real_prefix') or
+            (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix))
+
+
 def valid_system_python():
     """
-
     :return: full path of python executable if a python at /usr/bin/python3 or /usr/bin/python is
     available that is version 3.4 or newer, else None if not found
     """
@@ -463,7 +483,7 @@ def match_pyqt5_and_sip():
     if python_package_version('PyQt5') == '5.9' and \
             StrictVersion(python_package_version('sip')) == StrictVersion('4.19.4'):
         # Upgrade sip to a more recent version
-        args = make_pip_command('install -U --user sip')
+        args = make_pip_command('install -U' + pip_user + 'sip')
         try:
             subprocess.check_call(args)
         except subprocess.CalledProcessError:
@@ -578,6 +598,8 @@ def restart_script(restart_with=None) -> None:
      Python that was called, using this python executable, which is the full
      path
     """
+
+    print('restarting...',restart_with)
 
     sys.stdout.flush()
     sys.stderr.flush()
@@ -733,7 +755,7 @@ def uninstall_pip_package(package: str, no_deps_only: bool) -> None:
      depends on it
     """
 
-    l_command_line = 'list --user'
+    l_command_line = 'list' + pip_user
     if pip_version >= StrictVersion('9.0.0'):
         # pip 9.0 issues a red warning if format not specified
         l_command_line = '{} --format=columns'.format(l_command_line)
@@ -856,12 +878,28 @@ def check_packages_on_other_systems() -> None:
             import PyQt5
         except ImportError:
             import_msgs.append('python3 variant of PyQt5')
+
     try:
+        print('import GI test')
         import gi
         have_gi = True
     except ImportError:
-        import_msgs.append('python3 variant of gobject introspection')
-        have_gi = False
+        print('import GI error')
+        # Need to add special packages for Gobject-introspection in virtual environment
+        if add_vext:
+            # Maybe add test if vext.gi is already insalled ?
+            #
+            # install vext and vext.gi in Python virtual environment & restart
+            print('Installing required vext.gi with pip into virtual environment.')
+            print('Note that wheel errors can be ignored for vext installation.')
+            command_line = 'pip install vext.gi'
+            print(command_line)
+            run_cmd(command_line, restart=True, interactive=False)
+            print('Done...!')
+            have_gi = False # can be removed since script is re-started from here (?)
+        else:
+            import_msgs.append('python3 variant of gobject introspection')
+            have_gi = False
     if have_gi:
         try:
             gi.require_version('GUdev', '1.0')
@@ -1153,11 +1191,11 @@ def parser_options(formatter_class=argparse.HelpFormatter) -> argparse.ArgumentP
     else:
         # Translators: please don't translate the terms pip 9.0 or the command starting with Python
         note = _(
-            "Note: this option will remove the dependencies regardless of whether they are " 
-            "required by another program pip has installed. Upgrade to pip 9.0 or " 
-            "above if you want to avoid this behavior. You can do so using the command " 
-            "'python3 -m pip install pip -U --user'. " 
-            "Also note that any version of Rapid Photo Downloader installed " 
+            "Note: this option will remove the dependencies regardless of whether they are "
+            "required by another program pip has installed. Upgrade to pip 9.0 or "
+            "above if you want to avoid this behavior. You can do so using the command "
+            "'python3 -m pip install pip -U --user'. "
+            "Also note that any version of Rapid Photo Downloader installed "
             "by your Linux distribution's package manager will not be uninstalled."
         )
     msg2 = "{} {}".format(msg2, note)
@@ -1169,6 +1207,26 @@ def parser_options(formatter_class=argparse.HelpFormatter) -> argparse.ArgumentP
     parser.add_argument(
         '--uninstall-including-pip-dependencies', action='store_true', dest='uninstall_with_deps',
         help=msg2
+    )
+
+    parser.add_argument(
+        '--virtual-env', action='store_true', dest='virtual_env',
+        help=_(
+            "Install in current Python virzuall environment."
+            "If system libraries should be used, then the vritual environment"
+            "must be created with the --system-site-packages  option,"
+            "otherwise the --user-only option should be added to insall"
+            "all libraries in the virtual environment via pip."
+        )
+    )
+
+    parser.add_argument(
+        '--user-only', action='store_true', dest='user_only',
+        help=_(
+            "Install all in user or virtual environment"
+            "Avoids to use any extra system install and"
+            "doesn't copy the man pages into the system folder."
+        )
     )
 
     return parser
@@ -1447,7 +1505,8 @@ def do_install(installer: str,
                devel: bool,
                delete_install_script: bool,
                delete_tar_and_dir: bool,
-               force_this_version: bool) -> None:
+               force_this_version: bool,
+               user_only: bool) -> None:
     """
     :param installer: the tar.gz installer archive (optional)
     :param distro: specific Linux distribution
@@ -1463,6 +1522,7 @@ def do_install(installer: str,
      a temporary directory
     :param force_this_version: do not attempt to run a newer version of this script
     """
+
 
     if installer is None:
         delete_installer = True
@@ -1497,7 +1557,7 @@ def do_install(installer: str,
 
     # Don't call pip directly - there is no API, and its developers say not to
     cmd = make_pip_command(
-        'install --user --disable-pip-version-check -r {}'.format(temp_requirements.name)
+        'install' + pip_user + '--disable-pip-version-check -r {}'.format(temp_requirements.name)
     )
     with Popen(cmd, stdout=PIPE, stderr=PIPE, bufsize=1, universal_newlines=True) as p:
         for line in p.stdout:
@@ -1517,7 +1577,7 @@ def do_install(installer: str,
 
     print("\n" +_("Installing application...") +"\n")
     cmd = make_pip_command(
-        'install --user --disable-pip-version-check --no-deps {}'.format(installer)
+        'install' + pip_user + '--disable-pip-version-check --no-deps {}'.format(installer)
     )
     with Popen(cmd, stdout=PIPE, stderr=PIPE, bufsize=1, universal_newlines=True) as p:
         for line in p.stdout:
@@ -1568,11 +1628,15 @@ def do_install(installer: str,
         print(_("If you uninstall the application, remove these manpages yourself."))
         print(_("sudo may prompt you for the sudo password."))
         answer = input(_('Do want to install the man pages?') + '  [Y/n] ')
-    else:
+    elif not user_only:
         print("\n" + _("Installing man pages into {}").format(man_dir))
         print(_("If you uninstall the application, remove these manpages yourself."))
         print(_("sudo may prompt you for the sudo password.") + "\n")
         answer = 'y'
+    else:
+        # Keep man pages in install location only
+        print("\n" + _("Man pages can be found in {}/share/man/man1").format(sys.prefix))
+        answer = 'n'
 
     if get_yes_no(answer):
         if not os.path.isdir(man_dir):
@@ -1608,6 +1672,11 @@ def do_install(installer: str,
 
     clean_locale_tmpdir()
 
+    if is_venv():
+        # Show path to start script in virtual environment
+        print("\n" + _("Rapid Photo Downloader can be started without activated virtual environment with"
+                       "{}/bin/rapid-photo-downloader").format(sys.prefix))
+
     print("\n" + _("(If a segmentation fault occurs at exit, you can ignore it...)"))
 
 
@@ -1635,6 +1704,9 @@ def main():
     Setup repositories if needed.
     Then call main install logic.
     """
+
+    # allow modification of global variable pip_user
+    global pip_user
 
     parser = parser_options()
 
@@ -1669,11 +1741,26 @@ def main():
         clean_locale_tmpdir()
         sys.exit(1)
 
+    if args.virtual_env:
+        if not is_venv():
+            print ("To install in Rapid Photo Downloader in a Python virtual environment,")
+            print ("create anc activate the virtual environment before starting this script")
+            sys.exit(0)
+        # install in current virtual environment
+        pip_user = " "
+        print ("Using current virtual environment for installation.")
+    # else part not really required since variable is initialised accordingly
+    else:
+        # install in local user environment
+        pip_user = " --user"
+        print ("Use local user for pip")
+
     if args.uninstall_with_deps:
-        if len(sys.argv) > 2:
+        if len(sys.argv) > 2: #len(sys.argv) > 2:
             sys.stderr.write(
                 _("Do not include any other command line arguments when specifying") +
                 " --uninstall-with-pip-dependencies\n"
+                "Installations in virtual environment can be removed by deleting the virtual environment folder.\n"
             )
             clean_locale_tmpdir()
             sys.exit(1)
@@ -1696,7 +1783,9 @@ def main():
         clean_locale_tmpdir()
         sys.exit(0)
 
+
     if custom_python():
+        print('Found custom python')
         excecutable = valid_system_python()
         if excecutable is None:
             sys.stderr.write(
@@ -1706,17 +1795,29 @@ def main():
                 ) + "\n"
             )
             sys.exit(1)
-        else:
-            print(_("Restarting script using system python...") + "\n")
+        elif not args.virtual_env:
+            print(_(
+                    "Restarting script using system python...\n"
+                    "For insatllation in virtual environment use the option --virtual-env\n"
+                  ) + "\n")
             restart_script(restart_with=excecutable)
 
     local_folder_permissions(interactive=args.interactive)
 
-    distro = get_distro()
+    # If "user-only" ooption is set, then force distro as "unknown".
+    if args.user_only:
+        distro = Distro.unknown
+    else:
+        distro = get_distro()
+
     if distro != Distro.unknown:
         distro_version = get_distro_version(distro)
     else:
         distro_version = unknown_version
+
+    # Add vext
+    global add_vext
+    add_vext = args.virtual_env and args.user_only
 
     if distro == Distro.debian:
         if distro_version == unknown_version:
@@ -1768,12 +1869,13 @@ def main():
     else:
         distro_family = distro
 
+
     packages, local_pip = pip_packages_required()
 
     if packages:
         packages = ' '.join(packages)
 
-        if distro_family not in (Distro.fedora, Distro.debian, Distro.opensuse):
+        if not local_pip and distro_family not in (Distro.fedora, Distro.debian, Distro.opensuse):
             sys.stderr.write(
                 _(
                     "Install the following packages using your Linux distribution's standard "
@@ -1793,7 +1895,7 @@ def main():
         if not local_pip:
             command_line = make_distro_packager_commmand(distro_family, packages, args.interactive)
         else:
-            command_line = make_pip_command('install --user ' + packages, split=False)
+            command_line = make_pip_command('install' + pip_user + packages, split=False)
 
         run_cmd(command_line, restart=True, interactive=args.interactive)
 
@@ -1803,7 +1905,7 @@ def main():
         print("\n" + _("Python 3's pip and setuptools must be upgraded for your user.") + "\n")
 
         command_line = make_pip_command(
-            'install --user --upgrade pip setuptools wheel', split=False
+            'install' + pip_user + '--upgrade pip setuptools wheel', split=False
         )
 
         run_cmd(command_line, restart=True, interactive=args.interactive)
@@ -1815,7 +1917,7 @@ def main():
             # Translators: do not translate the term python or requests
             print(_("Installing python requests"))
             command_line = make_pip_command(
-                'install --user requests', split=False
+                'install' + pip_user + 'requests', split=False
             )
             run_cmd(command_line, restart=True, interactive=args.interactive)
     elif not os.path.exists(installer):
@@ -1830,7 +1932,8 @@ def main():
         installer=installer, distro=distro, distro_family=distro_family,
         distro_version=distro_version, interactive=args.interactive, devel=args.devel,
         delete_install_script=args.delete_install_script,
-        delete_tar_and_dir=args.delete_tar_and_dir, force_this_version=args.force_this_version
+        delete_tar_and_dir=args.delete_tar_and_dir, force_this_version=args.force_this_version,
+        user_only=args.user_only
     )
 
 # Base 85 encoded zip of locale data, to be extracted to a temporary directory and used for
