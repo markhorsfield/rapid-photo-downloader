@@ -2,6 +2,8 @@
 Modified install script for [Rapid Photo Downloader](http://www.damonlynch.net/rapid/index.html)
 to allow installation into Python virtual invironments.
 
+See also https://bugs.launchpad.net/rapid/+bug/1784132
+
 [Compare with original version 0.2.0](https://github.com/palto42/rapid-photo-downloader/compare/3264ea48092d738cd5db16a4039dbcf104809d17...master)
 
 ## Examples

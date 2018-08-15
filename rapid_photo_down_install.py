@@ -1571,7 +1571,7 @@ def do_install(installer: str,
 
     print("\n" +_("Installing application...") +"\n")
     cmd = make_pip_command(
-        'install' + pip_user + '--disable-pip-version-check --no-deps {}'.format(installer)
+        'install' + pip_user + '--disable-pip-version-check --no-deps "{}"'.format(installer)
     )
     with Popen(cmd, stdout=PIPE, stderr=PIPE, bufsize=1, universal_newlines=True) as p:
         for line in p.stdout:
@@ -1586,9 +1586,12 @@ def do_install(installer: str,
         sys.exit(1)
 
     path = os.getenv('PATH')
-    install_path = os.path.join(os.path.expanduser('~'), site.getuserbase(), 'bin')
+    if is_venv():
+        install_path = os.path.join(sys.prefix, 'bin')
+    else:
+        install_path = os.path.join(os.path.expanduser('~'), site.getuserbase(), 'bin')
 
-    if install_path not in path.split(':'):
+    if install_path not in path.split(':') or is_venv():
         if distro in debian_like or distro == Distro.opensuse:
             bin_dir = os.path.join(os.path.expanduser('~'), 'bin')
             if not os.path.isdir(bin_dir):
@@ -1596,12 +1599,26 @@ def do_install(installer: str,
                 os.mkdir(bin_dir)
             else:
                 created_bin_dir = False
+
             for executable in ('rapid-photo-downloader', 'analyze-pv-structure'):
                 symlink = os.path.join(bin_dir, executable)
-                if not os.path.exists(symlink):
+                # Additional check for "islink" added to catch broken symlinks.
+                if not (os.path.exists(symlink) or os.path.islink(symlink)):
                     print('Creating symlink', symlink)
                     print("If you uninstall the application, remove this symlink yourself.")
                     os.symlink(os.path.join(install_path, executable), symlink)
+                # Added some more details in case of existing file or symlink
+                else:
+                    if os.path.islink(symlink):
+                        if os.readlink(symlink)==os.path.join(install_path, executable):
+                            print('Correct symlink already exists:',symlink)
+                        else:
+                            print('Symlink "'  + symlink +
+                                  '" already exists, but points to "' +
+                                  os.readlink(symlink) + '" instead of "' +
+                                  os.path.join(install_path, executable) + '"')
+                    else:
+                        print('There is another file at targetted symlink location:',symlink)
 
             if created_bin_dir:
                 print(
