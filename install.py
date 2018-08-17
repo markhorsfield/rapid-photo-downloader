@@ -34,7 +34,6 @@ import sys
 import os
 from enum import Enum
 from distutils.version import StrictVersion, LooseVersion
-import pkg_resources
 import hashlib
 import tempfile
 import argparse
@@ -60,7 +59,17 @@ from base64 import b85decode
 from gettext import gettext as _
 import gettext
 
-__version__ = '0.2.0' # modified for venv test
+try:
+    import pkg_resources
+except ImportError:
+    print (
+        _("To continue, please first install the python3 package setuptools using your system's "
+          "package manager."
+          )
+    )
+    sys.exit(1)
+
+__version__ = '0.2.1' # modified for venv test
 __title__ = _('Rapid Photo Downloader installer')
 __description__ = _("Download and install latest version of Rapid Photo Downloader.")
 
@@ -142,6 +151,7 @@ class Distro(Enum):
     peppermint = 11
     antergos = 12
     elementary = 13
+    centos = 14
     unknown = 20
 
 
@@ -157,6 +167,7 @@ installer_cmds = {
     Distro.fedora: 'dnf',
     Distro.debian: 'apt-get',
     Distro.opensuse: 'zypper',
+    Distro.centos: 'yum',
 }
 
 
@@ -173,6 +184,8 @@ def get_distro() -> Distro:
                         return Distro.korora
                     if line.find('elementary') > 0:
                         return Distro.elementary
+                    if line.find('CentOS Linux') > 0:
+                        return Distro.centos
                 if line.startswith('ID='):
                     return get_distro_id(line[3:])
                 if line.startswith('ID_LIKE='):
@@ -205,7 +218,7 @@ def get_distro_version(distro: Distro):
     remove_quotemark = False
     if distro == Distro.fedora:
         version_string = 'REDHAT_BUGZILLA_PRODUCT_VERSION='
-    elif distro in debian_like or distro == Distro.opensuse:
+    elif distro in debian_like or distro == Distro.opensuse or distro == Distro.centos:
         version_string = 'VERSION_ID="'
         remove_quotemark = True
     elif distro == Distro.korora:
@@ -261,7 +274,7 @@ def validate_installer(installer) -> None:
         sys.exit(1)
 
 
-def pip_packages_required():
+def pip_packages_required(distro: Distro):
     """
     Determine which packages are required to ensure all of pip, setuptools
     and wheel are installed. Determines if pip is installed locally.
@@ -273,21 +286,23 @@ def pip_packages_required():
     if have_pip:
         local_pip = custom_python() or user_pip()
     else:
-        packages.append('python3-pip')
+        packages.append('{}-pip'.format(python3_version(distro)))
         local_pip = False
 
-    try:
-        import setuptools
-    except ImportError:
-        packages.append(pip_package('setuptools', local_pip))
+    if distro != Distro.centos:
 
-    if need_wheel:
-        packages.append(pip_package('wheel', local_pip))
+        try:
+            import setuptools
+        except ImportError:
+            packages.append(pip_package('setuptools', local_pip, distro))
 
-    try:
-        import wheel
-    except:
-        packages.append(pip_package('wheel', local_pip))
+        if need_wheel:
+            packages.append(pip_package('wheel', local_pip, distro))
+
+        try:
+            import wheel
+        except:
+            packages.append(pip_package('wheel', local_pip, distro))
 
     return packages, local_pip
 
@@ -389,7 +404,7 @@ def make_distro_packager_commmand(distro_family: Distro,
     :param packages: packages to query / install / remove
     :param interactive: whether the command should require user intervention
     :param command: the command the packaging program should run
-    :param sudo: whehter to prefix the call with sudo
+    :param sudo: whether to prefix the call with sudo
     :return: the command line in string format
     """
 
@@ -431,13 +446,14 @@ def is_venv():
 
 def valid_system_python():
     """
+
     :return: full path of python executable if a python at /usr/bin/python3 or /usr/bin/python is
     available that is version 3.4 or newer, else None if not found
     """
 
     cmd = "import platform; v = platform.python_version_tuple(); "\
           "print(int(v[0]) >= 3 and int( v[1]) >=4)"
-    for executable in ('/usr/bin/python3', '/usr/bin/python'):
+    for executable in ('/usr/bin/python3', '/usr/bin/python3.6', '/usr/bin/python'):
         try:
             args = shlex.split('{} -c "{}"'.format(executable, cmd))
             output = subprocess.check_output(args, universal_newlines=True)
@@ -491,7 +507,20 @@ def match_pyqt5_and_sip():
             sys.exit(1)
 
 
-def pip_package(package: str, local_pip: bool) -> str:
+def python3_version(distro: Distro) -> str:
+    """
+    Return package name appropriate to platform
+    :param distro: linux distribution
+    :return: package name appropriate to platform
+    """
+
+    if distro == Distro.centos:
+        return 'python36u'
+    else:
+        return 'python3'
+
+
+def pip_package(package: str, local_pip: bool, distro: Distro) -> str:
     """
     Helper function to construct installing core python packages
     :param package: the python package
@@ -500,11 +529,11 @@ def pip_package(package: str, local_pip: bool) -> str:
     :return: string of package names
     """
 
-    return package if local_pip else 'python3-{}'.format(package)
+    return package if local_pip else '{}-{}'.format(python3_version(distro), package)
 
 
 def get_yes_no(response: str) -> bool:
-    """version
+    """
     :param response: the user's response
     :return: True if user response is yes or empty, else False
     """
@@ -672,7 +701,7 @@ def enable_universe(interactive: bool) -> None:
     try:
         repos = subprocess.check_output(['apt-cache', 'policy'], universal_newlines=True)
         version = subprocess.check_output(['lsb_release', '-sc'], universal_newlines=True).strip()
-        if not '{}/universe'.format(version) in repos and version not in (
+        if '{}/universe'.format(version) not in repos and version not in (
                 'sarah', 'serena', 'sonya'):
             print(_("The Universe repository must be enabled.") + "\n")
             run_cmd(
@@ -684,6 +713,28 @@ def enable_universe(interactive: bool) -> None:
     except Exception:
         pass
 
+
+def enable_centos_ius(interactive: bool) -> None:
+    """
+    Enable the IUS repository on CentOS
+
+    :param interactive: if True, the user should be prompted to confirm
+     the command
+    """
+    try:
+        repos = subprocess.check_output(['yum', 'repolist'], universal_newlines=True)
+        if 'IUS Community Packages for Enterprise Linux' not in repos:
+            print(_('The IUS Community repository must be enabled.') + "\n")
+
+            cmds = (
+                'sudo yum -y install yum-utils',
+                'sudo yum -y install https://centos7.iuscommunity.org/ius-release.rpm'
+            )
+
+            for cmd in cmds:
+                run_cmd(command_line=cmd, restart=False, interactive=interactive)
+    except Exception:
+        pass
 
 def query_uninstall(interactive: bool) -> bool:
     """
@@ -733,6 +784,30 @@ def opensuse_package_installed(package: str) -> bool:
     """
 
     return not opensuse_missing_packages(package)
+
+
+def centos_missing_packages(packages: str):
+    """
+    Return which of the packages have not already been installed on openSUSE.
+
+    Does not catch exceptions.
+
+    :param packages: the packages to to check, in a string separated by white space
+    :return: list of packages
+    """
+
+    command_line = make_distro_packager_commmand(
+        distro_family=Distro.centos, packages=packages, interactive=True, command='list installed',
+        sudo=False
+    )
+    args = shlex.split(command_line)
+    output = subprocess.check_output(args, universal_newlines=True)
+
+    return [
+        package for package in packages.split()
+        if re.search(r"^{}\.".format(re.escape(package)), output, re.MULTILINE) is None
+    ]
+
 
 def package_in_pip_output(package: str, output: str) -> bool:
     """
@@ -879,7 +954,6 @@ def check_packages_on_other_systems() -> None:
             import PyQt5
         except ImportError:
             import_msgs.append('python3 variant of PyQt5')
-
     try:
         import gi
         have_gi = True
@@ -1096,6 +1170,38 @@ def install_required_distro_packages(distro: Distro,
                         distro_family, ' '.join(missing_packages), interactive
                     ), interactive=interactive
                 )
+    elif distro_family == Distro.centos:
+
+        packages = 'gstreamer1-plugins-good gobject-introspection libgphoto2-devel zeromq-devel ' \
+                   'exiv2 perl-Image-ExifTool LibRaw-devel gcc-c++ rpm-build ' \
+                   'gobject-introspection-devel cairo-gobject-devel python36u-devel libmediainfo'
+        print(
+            _(
+                "Querying yum to see if any required packages are already installed (this may "
+                "take a while)... "
+            )
+        )
+        try:
+            missing_packages = centos_missing_packages(packages)
+        except subprocess.CalledProcessError as e:
+            sys.stderr.write(_("Command failed") + "\n")
+            sys.stderr.write(_("Exiting") + "\n")
+            clean_locale_tmpdir()
+            sys.exit(1)
+        else:
+            if missing_packages:
+                print(
+                    _(
+                        "To continue, some packages required to run the application will be "
+                        "installed."
+                    ) + "\n"
+                )
+                run_cmd(
+                    make_distro_packager_commmand(
+                        distro_family, ' '.join(missing_packages), interactive
+                    ), interactive=interactive
+                )
+
     else:
         check_packages_on_other_systems()
 
@@ -1206,20 +1312,19 @@ def parser_options(formatter_class=argparse.HelpFormatter) -> argparse.ArgumentP
     parser.add_argument(
         '--virtual-env', action='store_true', dest='virtual_env',
         help=_(
-            "Install in current Python virzuall environment."
-            "If system libraries should be used, then the vritual environment"
+            "Install in current Python virtual environment."
+            "If the system libraries should be used, then the vritual environment"
             "must be created with the --system-site-packages option,"
-            "otherwise the --user-only option should be added to insall"
+            "otherwise the --user-only option should also be added to install"
             "all libraries in the virtual environment via pip."
         )
     )
 
     parser.add_argument(
-        '--user-only', action='store_true', dest='user_only',
+        '--no-dist', action='store_true', dest='no_dist',
         help=_(
-            "Install all in user or virtual environment"
-            "Avoids to use any extra system install and"
-            "doesn't copy the man pages into the system folder."
+            "Avoid installation via distro and prefer pip instead."
+            "The man pages will not be copied into the system folder."
         )
     )
 
@@ -1500,7 +1605,7 @@ def do_install(installer: str,
                delete_install_script: bool,
                delete_tar_and_dir: bool,
                force_this_version: bool,
-               user_only: bool) -> None:
+               no_dist: bool) -> None:
     """
     :param installer: the tar.gz installer archive (optional)
     :param distro: specific Linux distribution
@@ -1516,7 +1621,6 @@ def do_install(installer: str,
      a temporary directory
     :param force_this_version: do not attempt to run a newer version of this script
     """
-
 
     if installer is None:
         delete_installer = True
@@ -1542,6 +1646,9 @@ def do_install(installer: str,
                 uninstall_incompatible_pyqt5()
 
                 reqbytes = reqbytes.rstrip() + b'\n' + pypi_pyqt5_version()
+
+            if distro == Distro.centos:
+                reqbytes = reqbytes.rstrip() + b'\nPyGobject'
 
             with tempfile.NamedTemporaryFile(delete=False) as temp_requirements:
                 temp_requirements.write(reqbytes)
@@ -1599,7 +1706,6 @@ def do_install(installer: str,
                 os.mkdir(bin_dir)
             else:
                 created_bin_dir = False
-
             for executable in ('rapid-photo-downloader', 'analyze-pv-structure'):
                 symlink = os.path.join(bin_dir, executable)
                 # Additional check for "islink" added to catch broken symlinks.
@@ -1639,15 +1745,15 @@ def do_install(installer: str,
         print(_("If you uninstall the application, remove these manpages yourself."))
         print(_("sudo may prompt you for the sudo password."))
         answer = input(_('Do want to install the man pages?') + '  [Y/n] ')
-    elif not user_only:
+    elif no_dist:
+        # Keep man pages in install location only
+        print("\n" + _("Man pages can be found in {}/share/man/man1").format(sys.prefix))
+        answer = 'n'
+    else:
         print("\n" + _("Installing man pages into {}").format(man_dir))
         print(_("If you uninstall the application, remove these manpages yourself."))
         print(_("sudo may prompt you for the sudo password.") + "\n")
         answer = 'y'
-    else:
-        # Keep man pages in install location only
-        print("\n" + _("Man pages can be found in {}/share/man/man1").format(sys.prefix))
-        answer = 'n'
 
     if get_yes_no(answer):
         if not os.path.isdir(man_dir):
@@ -1716,7 +1822,6 @@ def main():
     Then call main install logic.
     """
 
-    # allow modification of global variable pip_user
     global pip_user
 
     parser = parser_options()
@@ -1754,17 +1859,17 @@ def main():
 
     if args.virtual_env:
         if not is_venv():
-            print ("To install in Rapid Photo Downloader in a Python virtual environment,")
-            print ("create anc activate the virtual environment before starting this script")
+            print ("To install Rapid Photo Downloader into a Python virtual environment,")
+            print ("create and activate the virtual environment before starting this script.")
             sys.exit(0)
-        # install in current virtual environment
+        # install in active virtual environment
         pip_user = " "
-        print ("Using current virtual environment for installation.")
-    # else part not really required since variable is initialised accordingly
+        print ("Using active virtual environment for pip installation.")
+    # else part not really required since variable was initialised accordingly
     else:
         # install in local user environment
         pip_user = " --user"
-        print ("Use local user for pip")
+        print ("Using local user environment for pip installation.")
 
     if args.uninstall_with_deps:
         if len(sys.argv) > 2:
@@ -1805,16 +1910,14 @@ def main():
             )
             sys.exit(1)
         elif not args.virtual_env:
-            print(_(
-                    "Restarting script using system python...\n"
-                    "For insatllation in virtual environment use the option --virtual-env\n"
-                  ) + "\n")
+            print(_("Restarting script using system python...") + "\n" +
+                  _("Note: To install RPD in a virtual environment, use the option --virtual-env") + "\n")
             restart_script(restart_with=excecutable)
 
     local_folder_permissions(interactive=args.interactive)
 
-    # If "user-only" option is set, then force distro as "unknown".
-    if args.user_only:
+    # If "no-dist" option is set, then force distro as "unknown".
+    if args.no_dist:
         distro = Distro.unknown
     else:
         distro = get_distro()
@@ -1824,9 +1927,11 @@ def main():
     else:
         distro_version = unknown_version
 
+    print(_('Detected Linux distribution {} {}'.format(distro.name, distro_version)))
+
     # Vext is required for virtual environments without system-site-packages option
     global require_vext
-    require_vext = args.virtual_env and args.user_only
+    require_vext = args.virtual_env and args.no_dist
 
     if distro == Distro.debian:
         if distro_version == unknown_version:
@@ -1862,6 +1967,9 @@ def main():
     if distro in (Distro.ubuntu, Distro.peppermint):
         enable_universe(args.interactive)
 
+    if distro == Distro.centos:
+        enable_centos_ius(args.interactive)
+
     if distro in debian_like:
         distro_family = Distro.debian
         if not have_apt:
@@ -1878,13 +1986,12 @@ def main():
     else:
         distro_family = distro
 
-
-    packages, local_pip = pip_packages_required()
+    packages, local_pip = pip_packages_required(distro)
 
     if packages:
         packages = ' '.join(packages)
 
-        if not local_pip and distro_family not in (Distro.fedora, Distro.debian, Distro.opensuse):
+        if distro_family not in (Distro.fedora, Distro.debian, Distro.opensuse, Distro.centos) and not local_pip:
             sys.stderr.write(
                 _(
                     "Install the following packages using your Linux distribution's standard "
@@ -1903,10 +2010,15 @@ def main():
 
         if not local_pip:
             command_line = make_distro_packager_commmand(distro_family, packages, args.interactive)
-        else:
-            command_line = make_pip_command('install' + pip_user + packages, split=False)
+            run_cmd(command_line, restart=True, interactive=args.interactive)
 
-        run_cmd(command_line, restart=True, interactive=args.interactive)
+        # Special case: CentOS IUS does not have python3 wheel package
+        if distro == Distro.centos:
+            packages = 'wheel'
+
+        if local_pip or distro == Distro.centos:
+            command_line = make_pip_command('install' + pip_user + packages, split=False)
+            run_cmd(command_line, restart=True, interactive=args.interactive)
 
     # Can now assume that both pip, setuptools and wheel have been installed
     if pip_version < StrictVersion('8.1'):
@@ -1942,7 +2054,7 @@ def main():
         distro_version=distro_version, interactive=args.interactive, devel=args.devel,
         delete_install_script=args.delete_install_script,
         delete_tar_and_dir=args.delete_tar_and_dir, force_this_version=args.force_this_version,
-        user_only=args.user_only
+        no_dist=args.no_dist
     )
 
 # Base 85 encoded zip of locale data, to be extracted to a temporary directory and used for
