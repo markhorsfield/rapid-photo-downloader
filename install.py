@@ -73,7 +73,7 @@ except ImportError:
     sys.exit(1)
 
 
-__version__ = '0.2.6'
+__version__ = '0.2.6'  # Changes for suuport of virtual environment with system-site-packages
 __title__ = _('Rapid Photo Downloader installer')
 __description__ = _("Download and install latest version of Rapid Photo Downloader.")
 
@@ -719,9 +719,15 @@ def local_folder_permissions(interactive: bool) -> None:
         # 0775
         u_g_o = u_only | stat.S_IRGRP | stat.S_IWGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH
 
-        base = site.getuserbase()
+        # Addition to support Python venv with system-site-packages enabled
+        if is_venv:
+            base = site.USER_BASE
+            site_packages = site.USER_SITE
+        else:
+            base = site.getuserbase()
+            site_packages = site.getusersitepackages()  # type: str
+
         lib = os.path.join(base, 'lib')
-        site_packages = site.getusersitepackages()  # type: str
 
         perms = [
             ('bin', u_g_o),
@@ -1815,8 +1821,7 @@ def parser_options(formatter_class=argparse.HelpFormatter) -> argparse.ArgumentP
     parser.add_argument(
         virtual_env_cmd_line_arg, action='store_true', dest='virtual_env',
         help=_(
-            "Install in current Python virtual environment. Virtual environments created with "
-            "the --system-site-packages option are not supported."
+            "Install in current Python virtual environment."
         )
     )
 
