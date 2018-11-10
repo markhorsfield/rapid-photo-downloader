@@ -73,7 +73,7 @@ except ImportError:
     sys.exit(1)
 
 
-__version__ = '0.2.6'
+__version__ = '0.2.6'  # added option to ignore system distribution
 __title__ = _('Rapid Photo Downloader installer')
 __description__ = _("Download and install latest version of Rapid Photo Downloader.")
 
@@ -136,6 +136,8 @@ unknown_version = LooseVersion('0.0')
 pip_user = "--user"
 # command line argument to indicate installation into a virtual environment
 virtual_env_cmd_line_arg = '--virtual-env'
+# command line argument to indicate that the distribution shoudl be ignored
+ignore_dist_cmd_line_arg = '--ignore-dist'
 
 
 class bcolors:
@@ -1820,6 +1822,14 @@ def parser_options(formatter_class=argparse.HelpFormatter) -> argparse.ArgumentP
         )
     )
 
+    parser.add_argument(
+        ignore_dist_cmd_line_arg, action='store_true', dest='ignore_dist',
+        help=_(
+            "Ignore the sytsme distribution (useful to install only into the "
+            "virtual environment)."
+        )
+    )
+
     return parser
 
 
@@ -2414,6 +2424,19 @@ def main():
         if venv:
             sys.argv.append(virtual_env_cmd_line_arg)
 
+    ignore_dist = args.ignore_dist
+
+    if venv and not ignore_dist:
+        answer = input(
+            _("Do you want to ignore the system distribution to install only "
+              "into the virtual environment?")
+            + '  [Y/n] '
+        )
+        ignore_dist = get_yes_no(answer)
+        if ignore_dist:
+            print("will ignore dist")
+            sys.argv.append(ignore_dist_cmd_line_arg)
+
     if venv:
         if not pypi_pyqt5_capable():
             sys.stderr.write(
@@ -2482,7 +2505,10 @@ def main():
 
     local_folder_permissions(interactive=args.interactive)
 
-    distro = get_distro()
+    if ignore_dist:
+        distro = Distro.unknown
+    else:
+        distro = get_distro()
 
     if distro != Distro.unknown:
         distro_version = get_distro_version(distro)
